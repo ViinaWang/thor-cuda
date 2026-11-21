@@ -1,0 +1,55 @@
+name: Build CUDA CC Shim (LD_PRELOAD)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Cross-compile tiny shim for aarch64
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq gcc-aarch64-linux-gnu
+
+          cat > cuda_cc_shim.c << 'EOF'
+          #define _GNU_SOURCE
+          #include <dlfcn.h>
+
+          #define CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR 75
+          #define CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR 76
+
+          typedef int (*cuGetAttr_t)(int*, int, int);
+
+          int cuDeviceGetAttribute(int* value, int attrib, int dev) {
+              static cuGetAttr_t real_fn = NULL;
+              if (!real_fn)
+                  real_fn = (cuGetAttr_t)dlsym(RTLD_NEXT, "cuDeviceGetAttribute");
+              int rc = real_fn(value, attrib, dev);
+              if (rc == 0) {
+                  if (attrib == CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR && *value == 10)
+                      *value = 12;
+                  if (attrib == CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR && *value == 1)
+                      *value = 0;
+              }
+              return rc;
+          }
+          EOF
+
+          aarch64-linux-gnu-gcc -shared -fPIC -O2 \
+            -o cc_shim.so cuda_cc_shim.c -ldl \
+            -Wl,-soname,cc_shim.so
+
+          file cc_shim.so | grep -q "ARM aarch64" && echo "✓ aarch64" || echo "✗ wrong arch"
+          ls -lh cc_shim.so
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-cc-shim
+          path: cc_shim.so
+          retention-days: 90
