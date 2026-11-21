@@ -19,21 +19,22 @@ jobs:
           cat > cuda_cc_shim.c << 'EOF'
           #define _GNU_SOURCE
           #include <dlfcn.h>
+          #include <stddef.h>
 
-          #define CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR 75
-          #define CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR 76
+          #define ATTR_CC_MAJOR 75
+          #define ATTR_CC_MINOR 76
 
-          typedef int (*cuGetAttr_t)(int*, int, int);
+          typedef int (*fn_t)(int*, int, int);
 
           int cuDeviceGetAttribute(int* value, int attrib, int dev) {
-              static cuGetAttr_t real_fn = NULL;
+              static fn_t real_fn = 0;
               if (!real_fn)
-                  real_fn = (cuGetAttr_t)dlsym(RTLD_NEXT, "cuDeviceGetAttribute");
+                  real_fn = (fn_t)dlsym(RTLD_NEXT, "cuDeviceGetAttribute");
               int rc = real_fn(value, attrib, dev);
               if (rc == 0) {
-                  if (attrib == CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR && *value == 10)
+                  if (attrib == ATTR_CC_MAJOR && *value == 10)
                       *value = 12;
-                  if (attrib == CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR && *value == 1)
+                  if (attrib == ATTR_CC_MINOR && *value == 1)
                       *value = 0;
               }
               return rc;
