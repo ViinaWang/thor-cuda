@@ -1,0 +1,72 @@
+name: Build libggml-cuda.so for Thor (SM101)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Setup QEMU arm64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build libggml-cuda.so in arm64 CUDA container
+        run: |
+          mkdir -p output
+          docker run --rm \
+            --platform linux/arm64 \
+            -v $(pwd)/output:/output \
+            nvidia/cuda:12.8.0-devel-ubuntu24.04 \
+            bash -euxo pipefail '
+              echo "Arch: $(uname -m)"
+              apt-get update -qq
+              apt-get install -y -qq cmake git
+
+              echo "=== nvcc check ==="
+              nvcc --version | tail -1
+
+              echo "=== Clone llama.cpp ==="
+              git clone --depth 1 https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp
+              cd /tmp/llama.cpp
+
+              echo "=== Build ONLY CUDA backend (SM101) ==="
+              mkdir -p build && cd build
+
+              cmake .. \
+                -DGGML_CUDA=ON \
+                -DCMAKE_CUDA_ARCHITECTURES=101 \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DLLAMA_BUILD_TESTS=OFF \
+                -DLLAMA_BUILD_EXAMPLES=OFF \
+                -DLLAMA_BUILD_SERVER=OFF \
+                -DLLAMA_BUILD_TOOLS=OFF
+
+              # 只编译 ggml-cuda 目标（最大的编译产物就是 libggml-cuda.so）
+              make ggml-cuda -j4
+
+              echo "=== Output ==="
+              find . -name "libggml-cuda*" -exec file {} \;
+              find . -name "libggml-cuda*" -exec cp {} /output/ \;
+
+              ls -la /output/
+            '
+
+      - name: Package
+        run: |
+          ls -la output/
+          file output/libggml-cuda.so | grep -q "ARM aarch64" && echo "✓ aarch64" || echo "⚠ check arch"
+          tar czf libggml-cuda-sm101.tar.gz -C output .
+          ls -lh libggml-cuda-sm101.tar.gz
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: libggml-cuda-sm101
+          path: libggml-cuda-sm101.tar.gz
+          retention-days: 90
